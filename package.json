@@ -1,5 +1,5 @@
 {
-  "name": "omit",
+  "name": "mini-source",
   "version": "1.0.0",
   "description": "",
   "main": "index.js",
@@ -11,8 +11,5 @@
   "license": "ISC",
   "devDependencies": {
     "vitest": "^0.22.1"
-  },
-  "dependencies": {
-    "omit.js": "^2.0.2"
   }
 }
