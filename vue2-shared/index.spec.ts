@@ -2,6 +2,8 @@ import { vi } from "vitest"
 import { expect, test } from "vitest"
 import {
   cached,
+  camelize,
+  capitalize,
   emptyObject,
   isArray,
   isDef,
@@ -79,4 +81,12 @@ test("cached", () => {
   expect(name).toBe("name")
   expect(fnMock).toHaveBeenCalled()
   expect(fnMock).toHaveBeenCalledTimes(1)
+})
+
+test("camelize", () => {
+  expect(camelize("on-click")).toBe("onClick")
+})
+
+test("capitalize", () => {
+  expect(capitalize("name")).toBe("Name")
 })

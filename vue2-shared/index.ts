@@ -56,7 +56,11 @@ export function cached(fn) {
   }
 }
 
-// const camelizeRE = /-(\w)/g
-// export const camelize = cached((str) => {
-//   return str.replace(camelizeRE, (_, c) => (c ? c.toUpperCase() : ""))
-// })
+export function capitalize(str) {
+  return str.charAt(0).toUpperCase() + str.slice(1)
+}
+
+const camelizeRE = /-(\w)/g
+export const camelize = cached((str) => {
+  return str.replace(camelizeRE, (_, c) => (c ? c.toUpperCase() : ""))
+})
