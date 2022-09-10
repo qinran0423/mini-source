@@ -15,6 +15,6 @@ describe("omit", () => {
 
     expect(copy).toEqual({ name: "mick" })
     expect(mick).toEqual({ name: "mick", age: 18 })
-    // expect(myOmit(mick, ["name", "age"])).toEqual({})
+    expect(myOmit(mick, ["name", "age"])).toEqual({})
   })
 })
