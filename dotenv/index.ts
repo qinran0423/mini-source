@@ -8,7 +8,7 @@ function parse(src) {
   src
     .toString()
     .split("\n")
-    .forEach((line, index) => {
+    .forEach((line) => {
       const keyValueStr = line.split("=")
       const key = keyValueStr[0]
       const val = keyValueStr[1] || ""
@@ -30,6 +30,7 @@ function config(options?) {
   // 读取node执行的当前路径下的.env文件
   let dotenvPath = path.resolve(process.cwd(), ".env")
   let encoding: BufferEncoding = "utf8"
+  let debug = false
   if (options) {
     if (options.path !== null) {
       dotenvPath = _resolveHome(options.path)
@@ -38,6 +39,10 @@ function config(options?) {
     if (options.encoding !== null) {
       encoding = options.encoding
     }
+
+    if (options.debug !== null) {
+      debug = true
+    }
   }
   try {
     const parsed = parse(fs.readFileSync(dotenvPath, { encoding }))
@@ -45,6 +50,10 @@ function config(options?) {
     Object.keys(parsed).forEach((key) => {
       if (!Object.prototype.hasOwnProperty.call(process.env, key)) {
         process.env[key] = parsed[key]
+      } else if (debug) {
+        console.log(
+          `"${key}" is already defined in \`process.env\` and will not be overwritten`
+        )
       }
     })
 

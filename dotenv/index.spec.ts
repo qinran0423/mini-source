@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest"
+import { describe, expect, test, vi } from "vitest"
 import fs from "fs"
 import dotenv from "."
 
@@ -18,11 +18,22 @@ describe("dotenv", () => {
     expect(process.env.AGE).toBe("18")
   })
 
-  test.only("config path", () => {
-    const paresd = dotenv.config({
-      path: "dotenv/.env"
-    })
-    expect(process.env.NAME).toBe("秦")
-    expect(process.env.AGE).toBe("20")
-  })
+  // test("config path", () => {
+  //   dotenv.config({
+  //     path: "dotenv/.env"
+  //   })
+  //   expect(process.env.NAME).toBe("秦")
+  //   expect(process.env.AGE).toBe("20")
+  // })
+
+  // test("debug", () => {
+  //   dotenv.config({
+  //     path: "dotenv/.env",
+  //     debug: true
+  //   })
+
+  //   global.console.log = vi.fn()
+
+  //   expect(global.console.log).not.toHaveBeenCalled()
+  // })
 })
