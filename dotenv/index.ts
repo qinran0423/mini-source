@@ -41,6 +41,7 @@ function config(options?) {
     }
 
     if (options.debug !== null) {
+      console.log(1111)
       debug = true
     }
   }
