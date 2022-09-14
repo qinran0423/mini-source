@@ -3,6 +3,10 @@ export function arrify(value) {
     return []
   }
 
+  if (Array.isArray(value)) {
+    return value
+  }
+
   if (typeof value === "string") {
     return [value]
   }
