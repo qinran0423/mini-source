@@ -67,4 +67,30 @@ describe("mitt#", () => {
       expect(events.get("baz:baT!")).toStrictEqual([foo])
     })
   })
+
+  describe("off()", () => {
+    it("should remove handler for type", () => {
+      const foo = () => {}
+      inst.on("foo", foo)
+      inst.off("foo", foo)
+      expect(events.get("foo")).toStrictEqual([])
+    })
+
+    it("should NOT normalize case", () => {
+      const foo = () => {}
+      inst.on("FOO", foo)
+      inst.on("Bar", foo)
+      inst.on("baz:bat!", foo)
+
+      inst.off("FOO", foo)
+      inst.off("Bar", foo)
+      inst.off("baz:baT!", foo)
+
+      expect(events.get("FOO")).toStrictEqual([])
+      expect(events.has("foo")).toEqual(false)
+      expect(events.get("Bar")).toStrictEqual([])
+      expect(events.has("bar")).toEqual(false)
+      expect(events.get("baz:bat!")).toStrictEqual([foo])
+    })
+  })
 })

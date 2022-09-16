@@ -15,6 +15,13 @@ export default function mitt(all) {
         all.set(type, [handler])
       }
     },
-    off() {}
+    off(type, handler) {
+      const handlers = all.get(type)
+      if (handlers) {
+        handlers.splice(handlers.indexOf(handler) >>> 0, 1)
+      } else {
+        all.set(type, [])
+      }
+    }
   }
 }
