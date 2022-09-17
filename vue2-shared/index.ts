@@ -56,9 +56,9 @@ export function cached(fn) {
   }
 }
 
-export function capitalize(str) {
+export const capitalize = cached((str) => {
   return str.charAt(0).toUpperCase() + str.slice(1)
-}
+})
 
 const camelizeRE = /-(\w)/g
 export const camelize = cached((str) => {

@@ -74,12 +74,15 @@ test("isPromise", () => {
   expect(isPromise(p1)).toBe(true)
 })
 
-test("cached", () => {
+test.only("cached", () => {
   const fnMock = vi.fn((str) => str)
   const getName = cached(fnMock)
-  const name = getName("name")
-  expect(name).toBe("name")
+  const name = getName("mick")
+  expect(name).toBe("mick")
   expect(fnMock).toHaveBeenCalled()
+  expect(fnMock).toHaveBeenCalledTimes(1)
+  const name1 = getName("mick")
+  expect(name1).toBe("mick")
   expect(fnMock).toHaveBeenCalledTimes(1)
 })
 
