@@ -63,3 +63,111 @@ function traverseNode(node: any, context) {
   }
 }
 ```
+`traverseNode`递归的遍历`ast`中的每个节点，然后执行一些转换函数，有些转换函数还会设计退出函数，然后用`exitFns`接收，这些退出函数在子节点处理完毕之后执行，因为有些逻辑需要依赖子节点处理完毕的结果。
+
+下面我们来看下转换函数,这里我们主要讲解3种转换函数：`Element`、表达式和`Text`。
+### Element转换函数
+```js
+export const transformElement: NodeTransform = (node, context) => {
+//  返回退出函数 
+  return function postTransformElement() {
+    node = context.currentNode!
+
+    if (
+      !(
+        node.type === NodeTypes.ELEMENT &&
+        (node.tagType === ElementTypes.ELEMENT ||
+          node.tagType === ElementTypes.COMPONENT)
+      )
+    ) {
+      return
+    }
+
+    const { tag, props } = node
+    const isComponent = node.tagType === ElementTypes.COMPONENT
+
+    let vnodeTag = isComponent
+      ? resolveComponentType(node as ComponentNode, context)
+      : `"${tag}"`
+
+    const isDynamicComponent =
+      isObject(vnodeTag) && vnodeTag.callee === RESOLVE_DYNAMIC_COMPONENT
+    // 属性
+    let vnodeProps: VNodeCall['props']
+    // 子节点
+    let vnodeChildren: VNodeCall['children']
+    // 动态组件、TELEPORT、SUSPENSE被视为Block
+    let shouldUseBlock =
+      // dynamic component may resolve to plain elements
+      isDynamicComponent ||
+      vnodeTag === TELEPORT ||
+      vnodeTag === SUSPENSE ||
+      (!isComponent &&
+        (tag === 'svg' || tag === 'foreignObject'))
+
+    // 属性处理
+    if (props.length > 0) {
+      ···
+    }
+
+    // 子节点处理
+    if (node.children.length > 0) {
+
+      const shouldBuildAsSlots =
+        isComponent &&
+        // Teleport is not a real component and has dedicated runtime handling
+        vnodeTag !== TELEPORT &&
+        // explained above.
+        vnodeTag !== KEEP_ALIVE
+
+      if (shouldBuildAsSlots) {
+        // 插槽的处理
+        const { slots, hasDynamicSlots } = buildSlots(node, context)
+        vnodeChildren = slots
+        if (hasDynamicSlots) {
+          patchFlag |= PatchFlags.DYNAMIC_SLOTS
+        }
+      } else if (node.children.length === 1 && vnodeTag !== TELEPORT) {
+        const child = node.children[0]
+        const type = child.type
+        // check for dynamic text children
+        const hasDynamicTextChild =
+          type === NodeTypes.INTERPOLATION ||
+          type === NodeTypes.COMPOUND_EXPRESSION
+        if (
+          hasDynamicTextChild &&
+          getConstantType(child, context) === ConstantTypes.NOT_CONSTANT
+        ) {
+          patchFlag |= PatchFlags.TEXT
+        }
+        // pass directly if the only child is a text node
+        // (plain / interpolation / expression)
+        if (hasDynamicTextChild || type === NodeTypes.TEXT) {
+          vnodeChildren = child as TemplateTextChildNode
+        } else {
+          vnodeChildren = node.children
+        }
+      } else {
+        vnodeChildren = node.children
+      }
+    }
+
+    node.codegenNode = createVNodeCall(
+      context,
+      vnodeTag,
+      vnodeProps,
+      vnodeChildren,
+      vnodePatchFlag,
+      vnodeDynamicProps,
+      vnodeDirectives,
+      !!shouldUseBlock,
+      false /* disableTracking */,
+      isComponent,
+      node.loc
+    )
+  }
+}
+```
+这里我截取了比较核心的代码。`transformElement`返回一个退出函数，会在当前的节点的所有子节点处理完毕之后执行。这里的优化部分我们先跳过（主要还没深入了解😄）。处理了节点的属性`props`,然后处理了节点的`children`。我们主要看一下对节点的`children`的处理。
+
+如果组件有子节点，那么说明是组件的插槽。如果是普通的元素节点，那么直接将`children`赋值给`vnodeChildren`。如果节点只有一个子节点，而且是插值，表达式或者文本节点，则直接将这个节点复制给`vnodeChildren`。
