@@ -29,6 +29,7 @@ function createTransformsContext(root, options) {
 }
 ```
 `transform`上下文对象中维护了一些配置，这里我们就把核心流程中主要用的配置拿了出来。比如整个`ast`节点，转换过程中需要调用的一些转换函数。
+
 ### 遍历AST节点
 ```js
 function traverseNode(node: any, context) {
@@ -171,3 +172,177 @@ export const transformElement: NodeTransform = (node, context) => {
 这里我截取了比较核心的代码。`transformElement`返回一个退出函数，会在当前的节点的所有子节点处理完毕之后执行。这里的优化部分我们先跳过（主要还没深入了解😄）。处理了节点的属性`props`,然后处理了节点的`children`。我们主要看一下对节点的`children`的处理。
 
 如果组件有子节点，那么说明是组件的插槽。如果是普通的元素节点，那么直接将`children`赋值给`vnodeChildren`。如果节点只有一个子节点，而且是插值，表达式或者文本节点，则直接将这个节点复制给`vnodeChildren`。
+
+最后通过`createVNodeCall`创建一个`VNodeCall`接口的代码生成节点
+```js
+export function createVNodeCall(
+  context: TransformContext | null,
+  tag: VNodeCall['tag'],
+  props?: VNodeCall['props'],
+  children?: VNodeCall['children'],
+  patchFlag?: VNodeCall['patchFlag'],
+  dynamicProps?: VNodeCall['dynamicProps'],
+  directives?: VNodeCall['directives'],
+  isBlock: VNodeCall['isBlock'] = false,
+  disableTracking: VNodeCall['disableTracking'] = false,
+  isComponent: VNodeCall['isComponent'] = false,
+  loc = locStub
+): VNodeCall {
+  if (context) {
+    if (isBlock) {
+      context.helper(OPEN_BLOCK)
+      context.helper(getVNodeBlockHelper(context.inSSR, isComponent))
+    } else {
+      context.helper(getVNodeHelper(context.inSSR, isComponent))
+    }
+    if (directives) {
+      context.helper(WITH_DIRECTIVES)
+    }
+  }
+
+  return {
+    type: NodeTypes.VNODE_CALL,
+    tag,
+    props,
+    children,
+    patchFlag,
+    dynamicProps,
+    directives,
+    isBlock,
+    disableTracking,
+    isComponent,
+    loc
+  }
+}
+```
+代码多次出现了`context.helper`，会把`Symbol`对象添加到`context.helpers`数组中，主要是为了生成最后的代码用，我们分析`generate`的时候会提到。
+### 表达式转换函数
+```js
+export const transformExpression: NodeTransform = (node, context) => {
+  if (node.type === NodeTypes.INTERPOLATION) {
+    node.content = processExpression(
+      node.content as SimpleExpressionNode,
+      context
+    )
+  } else if (node.type === NodeTypes.ELEMENT) {
+    // handle directives on element
+    for (let i = 0; i < node.props.length; i++) {
+      const dir = node.props[i]
+      // do not process for v-on & v-for since they are special handled
+      if (dir.type === NodeTypes.DIRECTIVE && dir.name !== 'for') {
+        const exp = dir.exp
+        const arg = dir.arg
+        // do not process exp if this is v-on:arg - we need special handling
+        // for wrapping inline statements.
+        if (
+          exp &&
+          exp.type === NodeTypes.SIMPLE_EXPRESSION &&
+          !(dir.name === 'on' && arg)
+        ) {
+          dir.exp = processExpression(
+            exp,
+            context,
+            // slot args must be processed as function params
+            dir.name === 'slot'
+          )
+        }
+        if (arg && arg.type === NodeTypes.SIMPLE_EXPRESSION && !arg.isStatic) {
+          dir.arg = processExpression(arg, context)
+        }
+      }
+    }
+  }
+}
+```
+我们可以看到`transformExpression`主要对插值节点和`element`节点做了区分。如果是插值节点则执行`processExpression`函数。我们从测试用例中的一个简单的例子来说，`{{ foo }}`执行了`processExpression`函数大概会生成这个样子`_ctx.foo`。当碰到表达式的值会变成一个复合表达式对象，这里就不多赘述了，感兴趣的大家自己解刨😁。如果是`element`节点则会对属性进行处理。
+### Text转换函数
+```js
+export const transformText: NodeTransform = (node, context) => {
+  if (
+    node.type === NodeTypes.ROOT ||
+    node.type === NodeTypes.ELEMENT ||
+    node.type === NodeTypes.FOR ||
+    node.type === NodeTypes.IF_BRANCH
+  ) {
+    // 返回一个退出函数
+    return () => {
+      const children = node.children
+      let currentContainer: CompoundExpressionNode | undefined = undefined
+      let hasText = false
+      // 通过双层循环将相邻的两个节点合并
+      for (let i = 0; i < children.length; i++) {
+        const child = children[i]
+        if (isText(child)) {
+          hasText = true
+          for (let j = i + 1; j < children.length; j++) {
+            const next = children[j]
+            if (isText(next)) {
+              if (!currentContainer) {
+                currentContainer = children[i] = createCompoundExpression(
+                  [child],
+                  child.loc
+                )
+              }
+              // 合并
+              currentContainer.children.push(` + `, next)
+              children.splice(j, 1)
+              j--
+            } else {
+              currentContainer = undefined
+              break
+            }
+          }
+        }
+      }
+
+      if (
+        !hasText ||
+        // 单个文件子节点 
+        (children.length === 1 &&
+          (node.type === NodeTypes.ROOT ||
+            (node.type === NodeTypes.ELEMENT &&
+              node.tagType === ElementTypes.ELEMENT &&
+              !node.props.find(
+                p =>
+                  p.type === NodeTypes.DIRECTIVE &&
+                  !context.directiveTransforms[p.name]
+              ) &&
+              !(__COMPAT__ && node.tag === 'template'))))
+      ) {
+        return
+      }
+
+      // 为每个文本节点创建代码生成节点
+      for (let i = 0; i < children.length; i++) {
+        const child = children[i]
+        if (isText(child) || child.type === NodeTypes.COMPOUND_EXPRESSION) {
+          const callArgs: CallExpression['arguments'] = []
+         
+          if (child.type !== NodeTypes.TEXT || child.content !== ' ') {
+            callArgs.push(child)
+          }
+          // mark dynamic text with flag so it gets patched inside a block
+          if (
+            !context.ssr &&
+            getConstantType(child, context) === ConstantTypes.NOT_CONSTANT
+          ) {
+            callArgs.push(
+              PatchFlags.TEXT +
+                (__DEV__ ? ` /* ${PatchFlagNames[PatchFlags.TEXT]} */` : ``)
+            )
+          }
+          children[i] = {
+            type: NodeTypes.TEXT_CALL,
+            content: child,
+            loc: child.loc,
+            codegenNode: createCallExpression(
+              context.helper(CREATE_TEXT),
+              callArgs
+            )
+          }
+        }
+      }
+    }
+  }
+}
+```
