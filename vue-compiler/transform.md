@@ -2,15 +2,29 @@
 
 ### 主要流程
 ```js
-export function transform(root, options = {}) {
-  const context = createTransformsContext(root, options)
-
+export function transform(root: RootNode, options: TransformOptions) {
+  const context = createTransformContext(root, options)
   traverseNode(root, context)
-
-  createRootCodegen(root)
-
+  if (options.hoistStatic) {
+    hoistStatic(root, context)
+  }
+  if (!options.ssr) {
+    createRootCodegen(root, context)
+  }
+  // finalize meta information
   root.helpers = [...context.helpers.keys()]
+  root.components = [...context.components]
+  root.directives = [...context.directives]
+  root.imports = context.imports
+  root.hoists = context.hoists
+  root.temps = context.temps
+  root.cached = context.cached
+
+  if (__COMPAT__) {
+    root.filters = [...context.filters!]
+  }
 }
+
 ```
 首先是创建`transform`上下文，通过`traverseNode`遍历`ast`节点，通过`createRootCodegen`创建根代码生成节点（当然还有一些静态提升的东东，这里暂时先不描述了）。
 ### 创建transform上下文
@@ -23,6 +37,7 @@ function createTransformsContext(root, options) {
     helper(key) {
       context.helpers.set(key, 1)
     }
+    ···
   }
 
   return context
@@ -278,6 +293,7 @@ export const transformText: NodeTransform = (node, context) => {
             const next = children[j]
             if (isText(next)) {
               if (!currentContainer) {
+                 //创建COMPOUND_EXPRESSION 
                 currentContainer = children[i] = createCompoundExpression(
                   [child],
                   child.loc
@@ -297,7 +313,7 @@ export const transformText: NodeTransform = (node, context) => {
 
       if (
         !hasText ||
-        // 单个文件子节点 
+        // 单个文件子节点 直接退出 因为可以直接赋值 不需要转换
         (children.length === 1 &&
           (node.type === NodeTypes.ROOT ||
             (node.type === NodeTypes.ELEMENT &&
@@ -346,3 +362,127 @@ export const transformText: NodeTransform = (node, context) => {
   }
 }
 ```
+首先对节点进行判断，如果是根节点、元素节点、`for`指令和`if`指令这返回一个退出函数（确保所有表达式节都已经被处理了）。然后通过双层循环将相邻的两个节点合并，最后为每个文本节点创建代码生成节点。我们直接来看用例吧:`<div>hi, {{message}}</div>`通过`parse`生成的`ast`
+```js
+  {
+    tag: 'div',
+    type: 2,
+    children:[
+      {
+        content: 'hi',
+        type: 3
+      },
+      {
+        content: {
+          content: 'message',
+          type: 1
+        },
+        type: 0
+      }
+    ]
+  }
+```
+转换后 文本节点和插值节点会被合并成一个复合节点（`COMPOUND_EXPRESSION`）
+```js
+{
+  tag: 'div',
+  type: 2,
+  children:[
+    {
+      children: [
+        {
+          content: 'hi',
+          type: 3
+        },
+        ' + ',
+        {
+          content: {
+            content: 'message',
+            type: 1
+          },
+          type: 0
+        }
+      ],
+      type: 5 // COMPOUND_EXPRESSION
+    }
+  ]
+}
+```
+合并节点之后，当只有一个单个文本子元素的节点时候，则什么都不需要做，直接退出，因为可以对`textContent`直接赋值更新。
+
+最后为子文本节点创建一个调用函数表达式的代码生成节点。就是处理已经合并过的子节点，然后遍历找到文本节点或者是复合表达式节点，通过`createCallExpression`创建一个调用函数表达式的代码生成节点
+```js
+export function createCallExpression<T extends CallExpression['callee']>(
+  callee: T,
+  args: CallExpression['arguments'] = [],
+  loc: SourceLocation = locStub
+): InferCodegenNodeType<T> {
+  return {
+    type: NodeTypes.JS_CALL_EXPRESSION,
+    loc,
+    callee,
+    arguments: args
+  } as InferCodegenNodeType<T>
+}
+```
+返回一个类型为`JS_CALL_EXPRESSION`的对象，`callee`为函数名，我们创建是函数表达式节点函数名应该是`createTextVNode`,参数就是`child`。
+### createRootCodegen
+最后创建根节点的代码生成器。
+```js
+function createRootCodegen(root: RootNode, context: TransformContext) {
+  const { helper } = context
+  const { children } = root
+  if (children.length === 1) {
+    // 子节点是单个元素节点
+    const child = children[0]
+    // if the single child is an element, turn it into a block.
+    if (isSingleElementRoot(root, child) && child.codegenNode) {
+      // single element root is never hoisted so codegenNode will never be
+      // SimpleExpressionNode
+      const codegenNode = child.codegenNode
+      if (codegenNode.type === NodeTypes.VNODE_CALL) {
+        makeBlock(codegenNode, context)
+      }
+      root.codegenNode = codegenNode
+    } else {
+      // - single <slot/>, IfNode, ForNode: already blocks.
+      // - single text node: always patched.
+      // root codegen falls through via genNode()
+      root.codegenNode = child
+    }
+  } else if (children.length > 1) {
+    // 子节点是多个节点，返回一个flagement代码生成节点
+    // root has multiple nodes - return a fragment block.
+    let patchFlag = PatchFlags.STABLE_FRAGMENT
+    let patchFlagText = PatchFlagNames[PatchFlags.STABLE_FRAGMENT]
+    // check if the fragment actually contains a single valid child with
+    // the rest being comments
+    if (
+      __DEV__ &&
+      children.filter(c => c.type !== NodeTypes.COMMENT).length === 1
+    ) {
+      patchFlag |= PatchFlags.DEV_ROOT_FRAGMENT
+      patchFlagText += `, ${PatchFlagNames[PatchFlags.DEV_ROOT_FRAGMENT]}`
+    }
+    root.codegenNode = createVNodeCall(
+      context,
+      helper(FRAGMENT),
+      undefined,
+      root.children,
+      patchFlag + (__DEV__ ? ` /* ${patchFlagText} */` : ``),
+      undefined,
+      undefined,
+      true,
+      undefined,
+      false /* isComponent */
+    )
+  } else {
+    // no children = noop. codegen will return null.
+  }
+}
+```
+首先对`root`的子节点判断，如果是单个元素节点，则返回一个`Block`,然后将`child`的`codegenNode`赋值给`root`节点的`codegenNode`。如果是多个元素节点，则返回一个`fragment`代码生成节点，然后赋值给`root`节点的`codegenNode`。
+
+以上做的操作都是为了后面生成代码做准备的。
+
+这篇我们大致讲解了`transform`的主要作用，以及一些转换函数的作用。当然我也借助了一些参考资料来帮助我理解，哪里写的不好或者写的不对的地方，希望大家多多评论。
